@@ -86,12 +86,6 @@ ISRHandler:
     MOVWF W_TEMP         ; Saving W register
     SWAPF STATUS,W       ; Moving STATUS into W
     MOVWF STATUS_TEMP    ; Saving STATUS register
-
-    ; Check Timer1 interrupt flag
-    BANKSEL PIR1
-    BTFSC PIR1,0         ; Did Timer1 overflow?
-    GOTO Timer1ISR
-    GOTO LeaveISR
     
 Timer1ISR:
     BANKSEL T1CON
