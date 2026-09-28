@@ -43,35 +43,37 @@ InterruptVector:
 PSECT code,class=CODE,delta=2
  
 Setup:
-    BANKSEL PORTA
-    CLRF PORTA           ; Clearing PORTA outputs
+    BCF 0x03,6      ; Sets Bank 0
+    BCF 0x03,5      ; Sets Bank 0
+    CLRF 0x05       ; Clearing PORTA
+    CLRF 0x06       ; Clearing PORTB
+    CLRF 0x07       ; Clearing PORTC
+    CLRF 0x0E       ; Clearing TMR1L
+    CLRF 0x0F       ; Clearing TMR1H
+    CLRF 0x10       ; Clearing T1CON / Timer1 off
 
-    BANKSEL ANSEL
-    CLRF ANSEL           ; Disabling analog functions on PORTA
-    CLRF ANSELH
-
-    BANKSEL TRISA
-    CLRF TRISA           ; Setting PORTA as outputs
-
-    BANKSEL T1CON
-    CLRF T1CON           ; Timer1 off, FOSC/4, 1:1 prescaler
-    MOVLW 0xB1
-    MOVWF TMR1H          ; Loading high byte
-    MOVLW 0xE0
-    MOVWF TMR1L          ; Loading low byte
-
-    BANKSEL PIR1
-    BCF PIR1,0           ; Clearing TMR1IF
-
-    BANKSEL PIE1
-    BSF PIE1,0           ; Enabling Timer1 interrupt TMR1IE
-
-    BANKSEL INTCON
-    BSF INTCON,6         ; Enabling peripheral interrupts PEIE
-    BSF INTCON,7         ; Enabling global interrupts GIE
-
-    BANKSEL T1CON
-    BSF T1CON,0          ; Starting Timer1
+    BCF 0x03,6      ; Sets Bank 1
+    BSF 0x03,5      ; Sets Bank 1
+    CLRF 0x85       ; Setting PORTA as outputs
+    CLRF 0x87       ; Setting PORTC as outputs
+    BSF 0x8C,0      ; Enabling Timer1 interrupt TMR1IE
+    
+    BSF 0x03,6      ; Sets Bank 3
+    BSF 0x03,5	    ; Sets Bank 3
+    CLRF 0x88	    ; Setting ANSEL LOW for digital I/O
+    CLRF 0x89       ; Setting ANSELH LOW for digital I/O
+    
+    ; Timer1 and Interrupt Setup
+    BCF 0x03,6       ; Sets Bank 0
+    BCF 0x03,5       ; Sets Bank 0
+    MOVLW 0xB1       ; Loading Timer1 high byte
+    MOVWF 0x0F       ; TMR1H = 0xB1
+    MOVLW 0xE0       ; Loading Timer1 low byte
+    MOVWF 0x0E       ; TMR1L = 0xE0
+    BCF 0x0C,0       ; Clearing Timer1 interrupt flag TMR1IF
+    BSF 0x0B,6       ; Enabling peripheral interrupts PEIE
+    BSF 0x0B,7       ; Enabling global interrupts GIE
+    BSF 0x10,0       ; Starting Timer1
 
     GOTO Main    
 
