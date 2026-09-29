@@ -28,14 +28,11 @@
     ; General Purpose Registers
     W_TEMP EQU 0x70 ; Used as part of the temporary hold for save/restore
     STATUS_TEMP EQU 0x71 ; Used as part of the temporary hold for save/restore
- 
     intersection_state  EQU 0x72 ; Complete packed intersection state
     count_temp EQU 0x73 ; Temporary STATE_COUNT value
     flags_temp EQU 0x74 ; Temporary lower state flags
-
     portb_old EQU 0x75 ; Previous RB4/RB5 values
     portb_now EQU 0x76 ; Current RB4/RB5 values
-    rise_temp EQU 0x77 ; Stores detected low-to-high edges
  
 ; Reset Vector at 0000h. Execution starts here after reset.
 PSECT resetVect,class=CODE,delta=2
@@ -72,7 +69,7 @@ Setup:
     CLRF 0x88	    ; Setting ANSEL LOW for digital I/O
     CLRF 0x89       ; Setting ANSELH LOW for digital I/O
     
-    ; Timer1 and Interrupt Setup
+    ; Interrupt Setup
     BCF 0x03,6       ; Sets Bank 0
     BCF 0x03,5       ; Sets Bank 0
     MOVF PORTB,W     ; Initial read of PORTB
@@ -180,6 +177,7 @@ State4Done:
 ISRHandler:
     MOVWF W_TEMP         ; Saving W register
     SWAPF STATUS,W       ; Moving STATUS into W
+    CLRF STATUS		 ; Sets Bank 0
     MOVWF STATUS_TEMP    ; Saving STATUS register
     
     ; Check External INT Interrupt
@@ -221,22 +219,24 @@ PORTBISR:
     MOVWF portb_now
     BCF INTCON,0        ; Clearing RBIF
 
-    ; Find LOW-to-HIGH changes, Rising Edge = Current AND NOT Previous
-    COMF portb_old,W    ; NOT previous sensor state
-    ANDWF portb_now,W   ; Current AND NOT Previous
-    MOVWF rise_temp
-    
-    ; Save current state for next IOC
+    ; Check N/S car detection on RB4                  
+    BTFSS portb_now,4           ; Is RB4 HIGH?          
+    GOTO CheckEWCar                                       
+    BTFSC portb_old,4           ; Was RB4 already HIGH?
+    GOTO CheckEWCar                                       
+    BSF intersection_state,1    ; Set NS_DETECTED       
+
+CheckEWCar:                                              
+    ; Check E/W car detection on RB5                  
+    BTFSS portb_now,5           ; Is RB5 HIGH?          
+    GOTO SavePORTB                                        
+    BTFSC portb_old,5           ; Was RB5 already HIGH? 
+    GOTO SavePORTB                                        
+    BSF intersection_state,2    ; Set EW_DETECTED       
+
+SavePORTB:
     MOVF portb_now,W
-    MOVWF portb_old
-
-    ; N/S Car Detection - RB4
-    BTFSC rise_temp,4
-    BSF intersection_state,1    ; Setting NS_DETECTED
-
-    ; E/W Car Detection - RB5
-    BTFSC rise_temp,5
-    BSF intersection_state,2    ; Setting EW_DETECTED
+    MOVWF portb_old              ; Save for next IOC
     RETURN
 
 LeaveISR:
