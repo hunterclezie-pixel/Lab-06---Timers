@@ -26,8 +26,16 @@
 ; config statements should precede project file includes.
 #include <xc.inc>  
     ; General Purpose Registers
-    W_TEMP	EQU 0x70 ; Used as part of the temporary hold for save/restore
+    W_TEMP EQU 0x70 ; Used as part of the temporary hold for save/restore
     STATUS_TEMP EQU 0x71 ; Used as part of the temporary hold for save/restore
+ 
+    intersection_state  EQU 0x72 ; Complete packed intersection state
+    count_temp EQU 0x73 ; Temporary STATE_COUNT value
+    flags_temp EQU 0x74 ; Temporary lower state flags
+
+    portb_old EQU 0x75 ; Previous RB4/RB5 values
+    portb_now EQU 0x76 ; Current RB4/RB5 values
+    rise_temp EQU 0x77 ; Stores detected low-to-high edges
  
 ; Reset Vector at 0000h. Execution starts here after reset.
 PSECT resetVect,class=CODE,delta=2
@@ -45,18 +53,26 @@ PSECT code,class=CODE,delta=2
 Setup:
     BCF 0x03,6      ; Sets Bank 0
     BCF 0x03,5      ; Sets Bank 0
-    CLRF 0x05       ; Clearing PORTA
     CLRF 0x06       ; Clearing PORTB
     CLRF 0x07       ; Clearing PORTC
-    CLRF 0x0E       ; Clearing TMR1L
-    CLRF 0x0F       ; Clearing TMR1H
-    CLRF 0x10       ; Clearing T1CON / Timer1 off
+    
+    ; Clearing GPRs
+    CLRF intersection_state ; Initial state = 00000000
+    CLRF count_temp
+    CLRF flags_temp
+    CLRF portb_old
+    CLRF portb_now
+    CLRF rise_temp
 
     BCF 0x03,6      ; Sets Bank 1
     BSF 0x03,5      ; Sets Bank 1
-    CLRF 0x85       ; Setting PORTA as outputs
+    MOVLW 0xFF
+    MOVWF 0x86      ; Setting PORTB as inputs
     CLRF 0x87       ; Setting PORTC as outputs
-    BSF 0x8C,0      ; Enabling Timer1 interrupt TMR1IE
+    MOVLW 0x30      ; Bits 00110000
+    MOVWF 0x96      ; Enable IOC on RB4 and RB5
+    BSF 0x81,6      ; INTEDG = 1, RB0/INT triggers low-to-high
+    BSF 0x81,7      ; Disabling internal PORTB pull-ups
     
     BSF 0x03,6      ; Sets Bank 3
     BSF 0x03,5	    ; Sets Bank 3
@@ -66,14 +82,14 @@ Setup:
     ; Timer1 and Interrupt Setup
     BCF 0x03,6       ; Sets Bank 0
     BCF 0x03,5       ; Sets Bank 0
-    MOVLW 0xB1       ; Loading Timer1 high byte
-    MOVWF 0x0F       ; TMR1H = 0xB1
-    MOVLW 0xE0       ; Loading Timer1 low byte
-    MOVWF 0x0E       ; TMR1L = 0xE0
-    BCF 0x0C,0       ; Clearing Timer1 interrupt flag TMR1IF
-    BSF 0x0B,6       ; Enabling peripheral interrupts PEIE
-    BSF 0x0B,7       ; Enabling global interrupts GIE
-    BSF 0x10,0       ; Starting Timer1
+    MOVF PORTB,W     ; Initial read of PORTB
+    ANDLW 0x30       ; Keeping RB4 and RB5
+    MOVWF portb_old  ; Saving initial sensor values
+    BCF INTCON,0     ; Clearing RBIF
+    BCF INTCON,1     ; Clearing INTF
+    BSF INTCON,4     ; Enabling external INT interrupt
+    BSF INTCON,3     ; Enabling PORTB IOC interrupt
+    BSF INTCON,7     ; Enabling global interrupts
 
     GOTO Main    
 
