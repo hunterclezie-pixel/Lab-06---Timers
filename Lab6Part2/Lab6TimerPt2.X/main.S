@@ -94,9 +94,28 @@ Setup:
     GOTO Main    
 
 Main:
-    MOVLW 0x01           ; Bit mask for RA0
-    XORWF PORTA,F        ; Toggling RA0 diagnostic output
-    GOTO Main		 ; Continuously repeat
+    ; Display complete packed state on PORTC
+    MOVF intersection_state,W
+    MOVWF PORTC
+
+    ; Get STATE_COUNT from upper nibble
+    SWAPF intersection_state,W
+    ANDLW 0x0F
+    MOVWF count_temp
+    
+    ; Is STATE_COUNT = 3?
+    MOVF count_temp,W
+    XORLW 0x03
+    BTFSC STATUS,2  ; Z = 1 if STATE_COUNT = 3
+    GOTO State3
+    
+    ; Is STATE_COUNT = 4?
+    MOVF count_temp,W
+    XORLW 0x04
+    BTFSC STATUS,2  ; Z = 1 if STATE_COUNT = 4
+    GOTO State4
+    
+    GOTO Main	; No state action required
     
 ISRHandler:
     MOVWF W_TEMP         ; Saving W register
