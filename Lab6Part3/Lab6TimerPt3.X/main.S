@@ -48,6 +48,7 @@ PSECT code,class=CODE,delta=2
 Setup:
     BCF 0x03,6      ; Sets Bank 0
     BCF 0x03,5      ; Sets Bank 0
+    CLRF 0x05	    ; Clearing PortA
     CLRF 0x06       ; Clearing PORTB
     CLRF 0x07       ; Clearing PORTC
     CLRF intersection_state ; Initial state = 00000000
@@ -59,35 +60,38 @@ Setup:
     CLRF 0x87       ; Setting PORTC as outputs
     MOVLW 0xC0      ; Bits 7:6 inputs, bits 5:0 outputs        
     MOVWF 0x85      ; TRISA, RA0-RA5 traffic LEDs
+    CLRF 0x96       ; IOCB = 0, PORTB IOC disabled (car detection ignored)
+    BSF 0x81,7      ; Disabling internal PORTB pull-ups
+
 
     BSF 0x03,6      ; Sets Bank 3
     BSF 0x03,5	    ; Sets Bank 3
     CLRF 0x88	    ; Setting ANSEL LOW for digital I/O
     CLRF 0x89       ; Setting ANSELH LOW for digital I/O
     
-    ; Interrupt and Timer Setup
-    BCF 0x03,6              ; Sets Bank 0
-    BCF 0x03,5              ; Sets Bank 0
-    CLRF T1CON              ; Timer1 off while configuring
+    ; Interrupt and Timer1 Setup
+    BCF 0x03,6      ; Sets Bank 0
+    BCF 0x03,5      ; Sets Bank 0
+    CLRF T1CON      ; Timer1 off while configuring
     MOVLW 0x0B
-    MOVWF TMR1H             ; Timer1 preload high byte
+    MOVWF TMR1H     ; Timer1 preload high byte
     MOVLW 0xDC
-    MOVWF TMR1L             ; Timer1 preload low byte
-    MOVLW 0x31		    ; 00110001
-    MOVWF T1CON		    ; Timer1 prescale = 1:8
-    BCF PIR1,0              ; Clearing TMR1IF
+    MOVWF TMR1L     ; Timer1 preload low byte
+    MOVLW 0x30	    ; T1CON: 1:8 prescale, internal clock, gate off
+    MOVWF T1CON		    
+    BCF PIR1,0      ; Clearing TMR1IF
     
-    BCF 0x03,6              ; Sets Bank 1
-    BSF 0x03,5              ; Sets Bank 1
-    BSF PIE1,0              ; Enabling Timer1 interrupt
+    BCF 0x03,6      ; Sets Bank 1
+    BSF 0x03,5      ; Sets Bank 1
+    BSF PIE1,0      ; Enabling Timer1 interrupt
     
-    BCF 0x03,6              ; Sets Bank 0
-    BCF 0x03,5              ; Sets Bank 0
-    BCF INTCON,3            ; PORTB IOC disabled
-    BCF INTCON,4            ; External INT disabled
-    BSF INTCON,6            ; Enabling peripheral interrupts
-    BSF INTCON,7            ; Enabling global interrupts
-
+    BCF 0x03,6      ; Sets Bank 0
+    BCF 0x03,5      ; Sets Bank 0
+    BCF INTCON,3    ; PORTB IOC disabled
+    BCF INTCON,4    ; External INT disabled
+    BSF INTCON,6    ; Enabling peripheral interrupts
+    BSF INTCON,7    ; Enabling global interrupts
+    BSF T1CON,0	    ; TMR1ON = 1, start Timer1
     GOTO Main    
 
 Main:
