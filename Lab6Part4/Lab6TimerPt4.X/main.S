@@ -31,6 +31,8 @@
     intersection_state  EQU 0x72 ; Complete packed intersection state
     count_temp EQU 0x73 ; Temporary STATE_COUNT value
     flags_temp EQU 0x74 ; Temporary lower state flags
+    portb_old EQU 0x75 ; Previous RB4/RB5 values
+    portb_now EQU 0x76 ; Current RB4/RB5 values
  
 ; Reset Vector at 0000h. Execution starts here after reset.
 PSECT resetVect,class=CODE,delta=2
@@ -60,9 +62,10 @@ Setup:
     CLRF 0x87       ; Setting PORTC as outputs
     MOVLW 0xC0      ; Bits 7:6 inputs, bits 5:0 outputs        
     MOVWF 0x85      ; TRISA, RA0-RA5 traffic LEDs
-    CLRF 0x96       ; IOCB = 0, PORTB IOC disabled (car detection ignored)
+    MOVLW 0x30
+    MOVWF 0x96      ; Enable IOC on RB4 and RB5
     BSF 0x81,7      ; Disabling internal PORTB pull-ups
-
+    BSF 0x81,6      ; INTEDG = 1, RB0/INT triggers low-to-high
 
     BSF 0x03,6      ; Sets Bank 3
     BSF 0x03,5	    ; Sets Bank 3
@@ -87,8 +90,13 @@ Setup:
     
     BCF 0x03,6      ; Sets Bank 0
     BCF 0x03,5      ; Sets Bank 0
-    BCF INTCON,3    ; PORTB IOC disabled
-    BCF INTCON,4    ; External INT disabled
+    MOVF PORTB,W
+    ANDLW 0x30
+    MOVWF portb_old
+    BCF INTCON,0     ; Clear RBIF
+    BCF INTCON,1     ; Clear INTF
+    BSF INTCON,4     ; Enable external INT
+    BSF INTCON,3     ; Enable PORTB IOC
     BSF INTCON,6    ; Enabling peripheral interrupts
     BSF INTCON,7    ; Enabling global interrupts
     BSF T1CON,0	    ; TMR1ON = 1, start Timer1
@@ -146,23 +154,62 @@ EWYellow:
     
 CheckGreenTime:
     MOVF count_temp,W
-    XORLW 0x0A              ; Is STATE_COUNT = 10?
+    XORLW 0x0A              ; STATE_COUNT = 10?
     BTFSC STATUS,2
-    GOTO BeginTransition
+    GOTO State4
     GOTO Main
+    
+State4:
+    ; Protect packed state during update
+    BCF INTCON,7    ; Temporarily disabling interrupts
+
+    ; Recheck STATE_COUNT after interrupts are disabled
+    SWAPF intersection_state,W
+    ANDLW 0x0F
+    XORLW 0x0A
+    BTFSS STATUS,2  ; Still STATE_COUNT = 4?
+    GOTO State4Done
+
+    ; Transition should not already be active
+    BTFSC intersection_state,3
+    GOTO State4Done
+
+    ; Check current direction
+    BTFSC intersection_state,0
+    GOTO CheckEWDirection
+    GOTO CheckNSDirection
+    
+State4Done:
+    BSF INTCON,7    ; Re-enable interrupts
+    GOTO Main
+    
+CheckNSDirection:
+    BTFSS intersection_state,1
+    GOTO BeginTransition       ; No N/S car
+    BTFSC intersection_state,2
+    GOTO BeginTransition       ; E/W car also present
+    GOTO SameDirection         ; N/S only
+
+CheckEWDirection:
+    BTFSC intersection_state,1
+    GOTO BeginTransition       ; N/S car present
+    BTFSS intersection_state,2
+    GOTO BeginTransition       ; No E/W car
+    GOTO SameDirection         ; E/W only
+    
+SameDirection:
+    MOVLW 0x01
+    ANDWF intersection_state,F
+    GOTO State4Done
 
 BeginTransition:
     ; Protect intersection_state while Main modifies it
-    BCF INTCON,7            ; Temporarily disabling interrupts
-
-    ; Keep DIRECTION and set TRANSITION
     MOVF intersection_state,W
-    ANDLW 0x01              ; Keeping DIRECTION only
-    IORLW 0x08              ; Setting TRANSITION = 1
-    MOVWF intersection_state
-
-    BSF INTCON,7            ; Re-enabling interrupts
-    GOTO Main
+    BCF INTCON,7            ; Temporarily disabling interrupts
+    ANDLW 0x0F              ; Preserve lower state flags
+    IORLW 0x08              ; TRANSITION = 1
+    MOVWF intersection_state ; STATE_COUNT becomes 0
+    GOTO State4Done
 
 CheckYellowTime:
     MOVF count_temp,W
@@ -172,16 +219,27 @@ CheckYellowTime:
     GOTO Main
 
 FinishTransition:
-    ; Protect intersection_state while Main modifies it
-    BCF INTCON,7            ; Temporarily disabling interrupts
+    BCF INTCON,7            ; Protect intersection_state
+
+    ; Make sure TRANSITION is still active
+    BTFSS intersection_state,3
+    GOTO FinishTransitionDone
+
+    ; Recheck STATE_COUNT = 2
+    SWAPF intersection_state,W
+    ANDLW 0x0F
+    XORLW 0x02
+    BTFSS STATUS,2
+    GOTO FinishTransitionDone
 
     ; Toggle DIRECTION and clear everything else
     MOVF intersection_state,W
-    XORLW 0x01           ; Toggle DIRECTION
-    ANDLW 0x01           ; Keep only new DIRECTION
+    XORLW 0x01
+    ANDLW 0x01
     MOVWF intersection_state
 
-    BSF INTCON,7         ; Re-enabling interrupts
+FinishTransitionDone:
+    BSF INTCON,7
     GOTO Main
     
 ISRHandler:
@@ -190,9 +248,17 @@ ISRHandler:
     CLRF STATUS		 ; Sets Bank 0
     MOVWF STATUS_TEMP    ; Saving STATUS register
     
-   ; Check Timer1 Interrupt
+    ; Check Timer1 Interrupt
     BTFSC PIR1,0         ; Is TMR1IF set?
     CALL Timer1ISR
+    
+    ; Check External INT Interrupt
+    BTFSC INTCON,1
+    CALL ExternalINTISR
+
+    ; Check PORTB IOC Interrupt
+    BTFSC INTCON,0
+    CALL PORTBISR    
     GOTO LeaveISR
     
 Timer1ISR:
@@ -203,26 +269,64 @@ Timer1ISR:
     MOVWF TMR1L
     BCF PIR1,0		  ; Clear Timer1 interrupt flag
 
-    ; Save lower four intersection-state flags
+    BTFSC PORTB,1	  ; RB1 = 1 means RUN
+    CALL IncrementStateCount
+    RETURN
+    
+ExternalINTISR:
+    ; RB1 = 0 means DEBUG
+    BTFSS PORTB,1
+    CALL IncrementStateCount
+    BCF INTCON,1        ; Always clear INTF
+    RETURN
+    
+IncrementStateCount:
+    ; Save lower four state flags
     MOVF intersection_state,W
-    ANDLW 0x0F            ; Keeping bits 3:0
+    ANDLW 0x0F
     MOVWF flags_temp
 
     ; Extract STATE_COUNT
     SWAPF intersection_state,W
-    ANDLW 0x0F            ; Keeping STATE_COUNT only
+    ANDLW 0x0F
     MOVWF count_temp
 
     ; Increment STATE_COUNT
-    INCF count_temp,F     ; STATE_COUNT + 1
+    INCF count_temp,F
     MOVLW 0x0F
-    ANDWF count_temp,F    ; Keeping it as a 4-bit value
+    ANDWF count_temp,F
 
     ; Put STATE_COUNT back into bits 7:4
     SWAPF count_temp,W
     ANDLW 0xF0
-    IORWF flags_temp,W      ; Recombining count and lower flags
+    IORWF flags_temp,W
     MOVWF intersection_state
+    RETURN
+    
+PORTBISR:
+    MOVF PORTB,W
+    ANDLW 0x30
+    MOVWF portb_now
+    BCF INTCON,0
+
+    ; Check N/S car detection on RB4
+    BTFSS portb_now,4
+    GOTO CheckEWCar
+    BTFSC portb_old,4
+    GOTO CheckEWCar
+    BSF intersection_state,1
+
+CheckEWCar:
+    ; Check E/W car detection on RB5
+    BTFSS portb_now,5
+    GOTO SavePORTB
+    BTFSC portb_old,5
+    GOTO SavePORTB
+    BSF intersection_state,2
+
+SavePORTB:
+    MOVF portb_now,W
+    MOVWF portb_old
     RETURN
 
 LeaveISR:
